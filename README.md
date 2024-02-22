@@ -1,5 +1,9 @@
-esp32_can
+canmod_can
 ==========
+
+A library adapted to CanMod boards.
+
+Based on https://github.com/collin80/esp32_can.
 
 A new, unified library all inclusive of code needed to make it operate. Implements
 a CAN driver for the built-in CAN hardware on an ESP32. Also implements a driver
