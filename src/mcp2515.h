@@ -32,6 +32,7 @@
 #define MCP2515_h
 
 #include "Arduino.h"
+#include "SPI.h"
 #include "mcp2515_defs.h"
 #include <can_common.h>
 
@@ -44,8 +45,8 @@ class MCP2515 : public CAN_COMMON
 {
   public:
 	// Constructor defining which pins to use for CS and INT
-    MCP2515(uint8_t CS_Pin, uint8_t INT_Pin);
-	
+	MCP2515(uint8_t CS_Pin, uint8_t INT_Pin, uint8_t SCK_Pin, uint8_t MOSI_Pin, uint8_t MISO_Pin);
+
 	// Overloaded initialization function
 	int Init(uint32_t baud, uint8_t freq);
 	int Init(uint32_t baud, uint8_t freq, uint8_t sjw);
@@ -101,6 +102,10 @@ class MCP2515 : public CAN_COMMON
     // Pin variables
 	uint8_t _CS;
 	uint8_t _INT;
+	uint8_t _SCK;
+	uint8_t _MOSI;
+	uint8_t _MISO;
+	SPIClass *mySPI = NULL;
 	QueueHandle_t	rxQueue;
 	QueueHandle_t	txQueue;
 	volatile uint16_t savedBaud;

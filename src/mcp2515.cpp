@@ -32,7 +32,7 @@
 #include "SPI.h"
 #include "mcp2515.h"
 #include "mcp2515_defs.h"
-#include "esp32_can.h"
+#include "canmod_can.h"
 
 SPISettings mcpSPISettings(8000000, MSBFIRST, SPI_MODE0);
 
@@ -104,7 +104,7 @@ void MCP2515::sendCallback(CAN_FRAME *frame)
     }
 }
 
-MCP2515::MCP2515(uint8_t CS_Pin, uint8_t INT_Pin) : CAN_COMMON(6) {
+MCP2515::MCP2515(uint8_t CS_Pin, uint8_t INT_Pin, uint8_t SCK_Pin, uint8_t MOSI_Pin, uint8_t MISO_Pin) : CAN_COMMON(6) {
   pinMode(CS_Pin, OUTPUT);
   digitalWrite(CS_Pin,HIGH);
   pinMode(INT_Pin,INPUT);
@@ -114,6 +114,9 @@ MCP2515::MCP2515(uint8_t CS_Pin, uint8_t INT_Pin) : CAN_COMMON(6) {
   
   _CS = CS_Pin;
   _INT = INT_Pin;
+  _SCK = SCK_Pin;
+  _MOSI = MOSI_Pin;
+  _MISO = MISO_Pin;
   
   savedBaud = 0;
   savedFreq = 16;
@@ -237,10 +240,11 @@ int MCP2515::Init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW) {
 
 bool MCP2515::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool autoBaud) {
 
-  SPI.begin(SCK, MISO, MOSI, SS);       //Set up Serial Peripheral Interface Port for CAN2
-  SPI.setClockDivider(SPI_CLOCK_DIV32);
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setBitOrder(MSBFIRST);
+  mySPI = new SPIClass(HSPI);
+  mySPI->begin(SCK, MISO, MOSI, SS);       //Set up Serial Peripheral Interface Port for CAN2
+  mySPI->setClockDivider(SPI_CLOCK_DIV32);
+  mySPI->setDataMode(SPI_MODE0);
+  mySPI->setBitOrder(MSBFIRST);
 
   if (!initializedResources) initializeResources();
   
@@ -512,36 +516,36 @@ uint32_t MCP2515::get_rx_buff(CAN_FRAME &msg)
 }
 
 void MCP2515::Reset() {
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_RESET);
+  mySPI->transfer(CAN_RESET);
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 }
 
 uint8_t MCP2515::Read(uint8_t address) {
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_READ);
-  SPI.transfer(address);
-  uint8_t data = SPI.transfer(0x00);
+  mySPI->transfer(CAN_READ);
+  mySPI->transfer(address);
+  uint8_t data = mySPI->transfer(0x00);
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
   return data;
 }
 
 void MCP2515::Read(uint8_t address, uint8_t data[], uint8_t bytes) {
   // allows for sequential reading of registers starting at address - see data sheet
   uint8_t i;
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_READ);
-  SPI.transfer(address);
+  mySPI->transfer(CAN_READ);
+  mySPI->transfer(address);
   for(i=0;i<bytes;i++) {
-    data[i] = SPI.transfer(0x00);
+    data[i] = mySPI->transfer(0x00);
   }
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 }
 
 CAN_FRAME MCP2515::ReadBuffer(uint8_t buffer) {
@@ -551,14 +555,14 @@ CAN_FRAME MCP2515::ReadBuffer(uint8_t buffer) {
   
   CAN_FRAME message;
   
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_READ_BUFFER | (buffer<<1));
-  uint8_t byte1 = SPI.transfer(0x00); // RXBnSIDH
-  uint8_t byte2 = SPI.transfer(0x00); // RXBnSIDL
-  uint8_t byte3 = SPI.transfer(0x00); // RXBnEID8
-  uint8_t byte4 = SPI.transfer(0x00); // RXBnEID0
-  uint8_t byte5 = SPI.transfer(0x00); // RXBnDLC
+  mySPI->transfer(CAN_READ_BUFFER | (buffer<<1));
+  uint8_t byte1 = mySPI->transfer(0x00); // RXBnSIDH
+  uint8_t byte2 = mySPI->transfer(0x00); // RXBnSIDL
+  uint8_t byte3 = mySPI->transfer(0x00); // RXBnEID8
+  uint8_t byte4 = mySPI->transfer(0x00); // RXBnEID0
+  uint8_t byte5 = mySPI->transfer(0x00); // RXBnDLC
 
   message.extended = (byte2 & B00001000);
 
@@ -574,45 +578,45 @@ CAN_FRAME MCP2515::ReadBuffer(uint8_t buffer) {
   message.rtr=(byte5 & B01000000);
   message.length = (byte5 & B00001111);  // Number of data bytes
   for(int i=0; i<message.length; i++) {
-    message.data.byte[i] = SPI.transfer(0x00);
+    message.data.byte[i] = mySPI->transfer(0x00);
   }
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 
   return message;
 }
 
 void MCP2515::Write(uint8_t address, uint8_t data) {
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_WRITE);
-  SPI.transfer(address);
-  SPI.transfer(data);
+  mySPI->transfer(CAN_WRITE);
+  mySPI->transfer(address);
+  mySPI->transfer(data);
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 }
 
 void MCP2515::Write(uint8_t address, uint8_t data[], uint8_t bytes) {
   // allows for sequential writing of registers starting at address - see data sheet
   uint8_t i;
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_WRITE);
-  SPI.transfer(address);
+  mySPI->transfer(CAN_WRITE);
+  mySPI->transfer(address);
   for(i=0;i<bytes;i++) {
-    SPI.transfer(data[i]);
+    mySPI->transfer(data[i]);
   }
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 }
 
 void MCP2515::SendBuffer(uint8_t buffers) {
   // buffers should be any combination of TXB0, TXB1, TXB2 ORed together, or TXB_ALL
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_RTS | buffers);
+  mySPI->transfer(CAN_RTS | buffers);
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 }
 
 void MCP2515::LoadBuffer(uint8_t buffer, CAN_FRAME *message) {
@@ -644,29 +648,29 @@ void MCP2515::LoadBuffer(uint8_t buffer, CAN_FRAME *message) {
     byte5 = byte5 | B01000000;
   }
   
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_LOAD_BUFFER | buffer);  
-  SPI.transfer(byte1);
-  SPI.transfer(byte2);
-  SPI.transfer(byte3);
-  SPI.transfer(byte4);
-  SPI.transfer(byte5);
+  mySPI->transfer(CAN_LOAD_BUFFER | buffer);  
+  mySPI->transfer(byte1);
+  mySPI->transfer(byte2);
+  mySPI->transfer(byte3);
+  mySPI->transfer(byte4);
+  mySPI->transfer(byte5);
  
   for(int i=0;i<message->length;i++) {
-    SPI.transfer(message->data.byte[i]);
+    mySPI->transfer(message->data.byte[i]);
   }
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 }
 
 uint8_t MCP2515::Status() {
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_STATUS);
-  uint8_t data = SPI.transfer(0x00);
+  mySPI->transfer(CAN_STATUS);
+  uint8_t data = mySPI->transfer(0x00);
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
   return data;
   /*
   bit 7 - CANINTF.TX2IF
@@ -681,12 +685,12 @@ uint8_t MCP2515::Status() {
 }
 
 uint8_t MCP2515::RXStatus() {
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_RX_STATUS);
-  uint8_t data = SPI.transfer(0x00);
+  mySPI->transfer(CAN_RX_STATUS);
+  uint8_t data = mySPI->transfer(0x00);
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
   return data;
   /*
   bit 7 - CANINTF.RX1IF
@@ -709,14 +713,14 @@ uint8_t MCP2515::RXStatus() {
 
 void MCP2515::BitModify(uint8_t address, uint8_t mask, uint8_t data) {
   // see data sheet for explanation
-  if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
+  if (!inhibitTransactions) mySPI->beginTransaction(mcpSPISettings);
   digitalWrite(_CS,LOW);
-  SPI.transfer(CAN_BIT_MODIFY);
-  SPI.transfer(address);
-  SPI.transfer(mask);
-  SPI.transfer(data);
+  mySPI->transfer(CAN_BIT_MODIFY);
+  mySPI->transfer(address);
+  mySPI->transfer(mask);
+  mySPI->transfer(data);
   digitalWrite(_CS,HIGH);
-  if (!inhibitTransactions) SPI.endTransaction();
+  if (!inhibitTransactions) mySPI->endTransaction();
 }
 
 bool MCP2515::Interrupt() {
@@ -893,7 +897,7 @@ void MCP2515::intHandler(void) {
     CAN_FRAME message;
     uint32_t ctrlVal;
     inhibitTransactions = true;
-    SPI.beginTransaction(mcpSPISettings);
+    mySPI->beginTransaction(mcpSPISettings);
     // determine which interrupt flags have been set
     uint8_t interruptFlags = Read(CANINTF);
     uint8_t status = Status();
@@ -958,7 +962,7 @@ void MCP2515::intHandler(void) {
     Write(EFLG, 0); //clear RX overflow flags
 
     inhibitTransactions = false;
-    SPI.endTransaction();
+    mySPI->endTransaction();
 }
 
 void MCP2515::handleFrameDispatch(CAN_FRAME *frame, int filterHit)
